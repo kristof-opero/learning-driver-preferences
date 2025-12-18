@@ -1,0 +1,34 @@
+
+name: driver-preferences
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # Core Python
+  - python=3.11
+
+  # Data & I/O
+  - pandas=2.2.*
+  - numpy=2.0.*
+  - pyarrow            
+  - openpyxl           
+
+  # Modeling
+  - scikit-learn=1.5.*
+  - scipy              
+  - joblib=1.4.*       
+
+  # Visualization
+  - matplotlib=3.9.*
+  - seaborn=0.13.*
+
+  # Notebooks
+  - jupyterlab         
+  - ipywidgets=8.1     
+
+  # Utilities
+  - tqdm=4.66.*        
+  - pyyaml             
+
+  # Pip 
+  - pip

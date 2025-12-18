@@ -208,3 +208,6 @@ __marimo__/
 
 # Project data
 data/
+
+# Local workspace settings
+*.code-workspace
