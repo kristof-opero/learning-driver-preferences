@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from learning_driver_preferences.plot_style import set_plot_style, CUSTOM_COLORS
+set_plot_style()
+
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, Iterable, List
 import json
@@ -158,8 +161,6 @@ def define_cutoff_time(
     inputfile: Path | str,
     nonrelevant_hour_from: Optional[int] = 19,  # None => include whole day
     depot: Optional[str] = None, *,
-    figsize: Tuple[int, int] = (14, 4),
-    line_color: str = "#1a73e8",
     line_width: float = 1.2,
     percentiles: Iterable[int] = (85, 90, 95, 98),
     output_dir: Optional[Path | str] = None,  # if None, tries OUTPUT, else ./output
@@ -225,8 +226,8 @@ def define_cutoff_time(
             p_labels[p] = f"{hh:02d}:{mm:02d}"
 
     # PLOT
-    fig, ax = plt.subplots(figsize=figsize)
-    ax.plot(counts.index, counts.values, color=line_color, linewidth=line_width, label="Requests/min")
+    fig, ax = plt.subplots(figsize=(14, 5))
+    ax.plot(counts.index, counts.values, color=CUSTOM_COLORS["dark_blue"], linewidth=line_width, marker=None, markersize=0, linestyle = "-", label="Requests/min")
 
     hours_ticks = list(range(0, cutoff_minutes + 1, 60))
     ax.set_xlim(0, cutoff_minutes)
@@ -303,8 +304,6 @@ def define_cutoff_stops(
     depot: Optional[str] = None,
     *,
     column: str = "num_tasks",
-    hist_color: str = "#2a9d8f",
-    figsize: Tuple[int, int] = (10, 4),
     percentiles: Iterable[float] | None = None,  # 0–1 scale (e.g., [0.05,0.10,0.25,0.5])
     bins: int | str = 40,            # or 'auto'/'fd'
     output_dir: Optional[Path | str] = None,
@@ -377,8 +376,8 @@ def define_cutoff_stops(
 
     # PLOT HISTOGRAM
     # Basic histogram
-    fig, ax = plt.subplots(figsize=figsize)
-    sns.histplot(s, bins=bins, color=hist_color, ax=ax, stat="count")
+    fig, ax = plt.subplots(figsize=(14, 5))
+    sns.histplot(s, bins=bins, color=CUSTOM_COLORS["dark_blue"], ax=ax, stat="count")
     ax.set_title(f"Distribution of {column} ({Path(inputfile).name}) - depot: {info_in['selected_depot']}")
     ax.set_xlabel(column)
     ax.set_ylabel("Frequency")
