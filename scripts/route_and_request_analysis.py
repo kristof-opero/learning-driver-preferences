@@ -9,6 +9,7 @@ from typing import Optional, Tuple, Dict, Any, List, Union
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import datetime
 
 from ipywidgets import interact, Dropdown, ToggleButtons
 
@@ -122,6 +123,40 @@ def read_inputfile(
                 s = s.mask(mask_bad, s2)
         df["date"] = s.dt.date.astype(str)  # ISO-like "YYYY-MM-DD", 'NaT'->'NaT' string if NaN
 
+    # Normalize "time" if present
+    if "request_time" in df.columns:
+        def normalize_time(x):
+            if pd.isna(x):
+                return None
+            x = str(x).strip()
+            # Try many formats (loose matching)
+            fmts = [
+                "%I:%M:%S.%f %p",  # 01:02:03.456 PM
+                "%I:%M:%S %p",     # 01:02:03 PM
+                "%H:%M:%S.%f",     # 13:02:03.456
+                "%H:%M:%S",        # 13:02:03
+                "%H:%M",           # 13:02
+            ]
+            for fmt in fmts:
+                try:
+                    t = datetime.datetime.strptime(x, fmt).time()
+                    return t.strftime("%H:%M:%S")
+                except:
+                    pass
+
+            # Sometimes Excel reads dates as timestamps:
+            try:
+                ts = pd.to_datetime(x, errors="coerce")
+                if not pd.isna(ts):
+                    return ts.strftime("%H:%M:%S")
+            except:
+                pass
+
+            return None
+
+        df["request_time"] = df["request_time"].apply(normalize_time)
+
+    # build summary
     info = {
         "selected_depot": selected_depot,
         "source": "csv" if is_csv else "excel",
@@ -170,103 +205,168 @@ def ensure_minute_of_day(df: pd.DataFrame):
 def filter_on_cutoff_time_and_tasks(
  # the combination of route_id and day/date = "a trip" (NL = "rit") = the execution of that route/route_id on a particular day
     df: pd.DataFrame,
-    cutoff_minutes: int = 660,      # 11:00
-    min_mean_tasks: float = 30.0    # keep only trips (route/day) with mean tasks > 30 (mean tasks = mean of num_tasks across the requests for that trip)
+    cutoff_time: datetime.time = datetime.time(11, 0, 0),  # 11:00
+    cutoff_mean_tasks: float = 30.0    # keep only trips (route/day) with mean tasks > 30 (mean tasks = mean of num_tasks across the requests for that trip)
 ) -> pd.DataFrame:
     """Apply first-round filter (if column exists) and time cutoff; keep mornings with mean tasks > threshold."""
     # Standardize key columns (they may or may not be present depending on source)
     if "date" not in df.columns:
-        raise ValueError("Input must include a 'date' column after normalization.")
+        raise ValueError("Input must include a 'date' column")
+    if "request_time" not in df.columns:
+        raise ValueError("Input must include a 'request_time' column")
     if "route_id" not in df.columns:
-        raise ValueError("Input must include a 'route_id' column after normalization.")
+        raise ValueError("Input must include a 'route_id' column")
     if "config_name" not in df.columns:
-        raise ValueError("Input must include a 'config_name' column after normalization.")
+        raise ValueError("Input must include a 'config_name' colum")
     if "num_tasks" not in df.columns:
-        raise ValueError("Input must include a 'num_tasks' column after normalization.")
+        raise ValueError("Input must include a 'num_tasks' column")
 
-    df_filter = df.copy()
-    # Filter on cutoff time (default 11h) using minute-of-day
-    minutes = ensure_minute_of_day(df_filter)
-    df_filter["_minute_of_day"] = minutes  # of: df_f = df_f.assign(_minutes=minutes)
-    df_filter = df_filter.loc[df_filter["_minute_of_day"] <= cutoff_minutes]
+    filter_df = df.copy()
+    # # Filter on cutoff time (default 11h) using minute-of-day
+    # minutes = ensure_minute_of_day(df_filter)
+    # df_filter["_minute_of_day"] = minutes  # of: df_f = df_f.assign(_minutes=minutes)
+    times = pd.to_datetime(filter_df["request_time"], format="%H:%M:%S", errors="coerce").dt.time
+
+    mask = times <= cutoff_time
+    filter_df = filter_df.loc[mask].copy()
 
     # Set num_tasks to numeric - defensive code to be sure num_tasks is numeric
-    df_filter["num_tasks"] = pd.to_numeric(df_filter["num_tasks"], errors="coerce")
+    filter_df["num_tasks"] = pd.to_numeric(filter_df["num_tasks"], errors="coerce")
 
     # Keep only trips (route_id, date) with mean tasks > threshold
     key = ["route_id", "date"]
     trip_mean_tasks = (
-        df_filter.groupby(key)["num_tasks"].mean().reset_index(name="mean_num_tasks_of_trip")
+        filter_df.groupby(key)["num_tasks"].mean().reset_index(name="mean_num_tasks_of_trip")
     )
-    df_filter_trips = trip_mean_tasks.loc[trip_mean_tasks["mean_num_tasks_of_trip"] > min_mean_tasks, key] # only keep route_id and day, throw away the mean_num_tasks
-    df_keep = df_filter.merge(df_filter_trips, on=key, how="inner")
+    filter_tasks_df = trip_mean_tasks.loc[trip_mean_tasks["mean_num_tasks_of_trip"] > cutoff_mean_tasks, key] # only keep route_id and day, throw away the mean_num_tasks
+    filtered_time_and_tasks_df = filter_df.merge(filter_tasks_df, on=key, how="inner")
 
     # Provide weekday
-    df_keep = df_keep.drop(columns=["_minute_of_day"], errors="ignore")
-    df_keep["date"] = pd.to_datetime(df_keep["date"], errors="coerce")
-    df_keep["weekday"] = df_keep["date"].dt.day_name()
+    # df_keep = df_keep.drop(columns=["_minute_of_day"], errors="ignore")
+    filtered_time_and_tasks_df["date"] = pd.to_datetime(filtered_time_and_tasks_df["date"], errors="coerce")
+    filtered_time_and_tasks_df["weekday"] = filtered_time_and_tasks_df["date"].dt.day_name()
 
-    return df_keep
+    return filtered_time_and_tasks_df
 
-def aggregate_trip(df_keep: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate filtered rows from df_keep (= 1 row per kept request) to a table with trips ( = 1 row per trip = 1 row per route/day; requests are summed acroos the trip)
-    Returns columns:
-      - route_id, date, weekday
-      - requests_count
-      - day_mean_tasks
-      - estimate_pct, create_pct, add_pct (shares within morning)
-      - first_minute, last_minute, span_minutes
-    """
+# Annotate requests with sequence number: "run number" (first run, second run, third run = sequence number of requests to software) and "run label" (first run, intermediate run and last run) to be able to compare f.ex first and last request to software (run) of a trip
+def annotate_requests_with_sequence_num(df: pd.DataFrame):
+    # Ensure required columns exist
+    required = {"route_id", "date", "request_time"}
+    missing = required - set(df.columns)
+    if missing:
+        raise KeyError(f"Missing required columns: {sorted(missing)}")
+
+   # Parse request_time and compute minute_of_day - to order the request_times in an easy way, minute_of_day gives an integer from 0 - 1439 (24x60min in a day), and you keep order across the day
+    t = pd.to_datetime(df["request_time"], format="%H:%M:%S", errors="coerce")
+    # df_files["minute_of_day"] = t.dt.hour*60 + t.dt.minute
+
+    df["request_time"] = pd.to_datetime(
+        df["request_time"],
+        format="%H:%M:%S",
+        errors="coerce"
+    ).dt.time
+
+
+    sorted_df= df.sort_values(
+        by=["route_id", "date", "request_time"],
+        ascending=[True, True, True]
+    )
+
+    sorted_df["run_number"] = (
+        sorted_df.groupby(["route_id","date"]).cumcount() + 1)
+
+    # Determine group sizes to identify 'last_run'
+    group_sizes = (
+        sorted_df.groupby(["route_id","date"])["request_time"].transform("size")
+    )
+    sorted_df["group_size"] = group_sizes
+
+    # Assign run_label based on run_number and group_size
+    sorted_df["run_label"] = "not_relevant"
+
+    condition_only  = (sorted_df["run_number"].astype("Int64") == 1) & (sorted_df["group_size"] == 1)
+    condition_first = (sorted_df["run_number"].astype("Int64") == 1) & (sorted_df["group_size"] > 1)
+    condition_last  = (sorted_df["run_number"].astype("Int64") == sorted_df["group_size"]) & (sorted_df["group_size"] > 1)
+    condition_mid   = ~(condition_only | condition_first | condition_last)
+
+    sorted_df.loc[condition_only,  "run_label"] = "only_run"
+    sorted_df.loc[condition_first, "run_label"] = "first_run"
+    sorted_df.loc[condition_last,  "run_label"] = "last_run"
+    sorted_df.loc[condition_mid,   "run_label"] = "intermediate_run"
+
+    annotated_with_request_seq = sorted_df.copy()
+
+    return annotated_with_request_seq
+
+def aggregate_trips(filtered_time_and_tasks_df: pd.DataFrame) -> pd.DataFrame:
+
+# Aggregate filtered rows from df_keep (= 1 row per kept request) to a table with trips ( = 1 row per trip = 1 row per route/day; requests are summed acroos the trip)
+#     Returns columns:
+#       - route_id, date, weekday
+#       - requests_count
+#       - day_mean_tasks
+#       - estimate_pct, create_pct, add_pct (share of request_type within trip)
+
+    df = filtered_time_and_tasks_df.copy()
+
     key = ["route_id", "date"] # trip
 
     # Request counts per trip
-    request_counts = df_keep.groupby(key).size().reset_index(name="requests_count")
+    request_counts = df.groupby(key).size().reset_index(name="requests_count")
 
     # Mean of num_tasks per trip
     trip_mean_tasks = (
-        df_keep.groupby(key)["num_tasks"].mean().reset_index(name="mean_tasks_trip")
+        df.groupby(key)["num_tasks"].mean().reset_index(name="mean_tasks_trip")
     )
 
     # Config_name shares per trip
     # Computes the number of config_name (= type of request = EstimateTime, CreateSequence, AddToSequence) per trip (route, day)
     type_of_requests_count = (
-        df_keep.groupby(key + ["config_name"]).size()
+        df.groupby(key + ["config_name"]).size()
         .unstack("config_name", fill_value=0) # unstack = set config_names to separate columns instead of 1 column config_name with types of requests as values in rows
     )
 
+    type_of_requests_count = type_of_requests_count.rename(
+        columns={
+            "EstimateTime": "estimate_count",
+            "CreateSequence": "create_count",
+            "AddToSequence": "add_count"
+        }
+    )
+
     # Ensure consistent columns
-    for config in ["EstimateTime", "CreateSequence", "AddToSequence"]:
+    for config in ["estimate_count", "create_count", "add_count"]:
         if config not in type_of_requests_count.columns:
             type_of_requests_count[config] = 0
 
-    type_of_requests_count = type_of_requests_count[["EstimateTime", "CreateSequence", "AddToSequence"]]
+    type_of_requests_count = type_of_requests_count[["estimate_count", "create_count", "add_count"]]
     type_of_requests_count["total_count"] = type_of_requests_count.sum(axis=1).replace(0, np.nan)
     type_of_requests_portion= type_of_requests_count.div(type_of_requests_count["total_count"], axis=0) * 100.0
     type_of_requests_portion = type_of_requests_portion.rename(
         columns={
-            "EstimateTime": "estimate_pct",
-            "CreateSequence": "create_pct",
-            "AddToSequence": "add_pct",
+            "estimate_count": "estimate_pct",
+             "create_count": "create_pct",
+            "add_count": "add_pct",
             "total_count": "total_pct"
         }
     ).reset_index()
 
     # Merge
-    trip_table = (
+    aggretated_trips_df = (
         request_counts.merge(trip_mean_tasks, on=key, how="left")
         .merge(type_of_requests_count, on=key, how = "left")
         .merge(type_of_requests_portion, on=key, how="left")
-        .merge(df_keep[key + ["weekday"]].drop_duplicates(), on=key, how="left")
+        .merge(df[key + ["weekday"]].drop_duplicates(), on=key, how="left")
     )
 
-    return trip_table
+    return aggretated_trips_df
 
 # ==============================================================================
 # (2) BASIC INFORMATION: NUMBER OF ROUTES, TRIPS AND REQUESTS TAKEN IN ACCOUNT
 # ==============================================================================
-def basic_information(df: pd.DataFrame, min_mean_tasks: int = 30):
-    df_keep_all_tasks = filter_on_cutoff_time_and_tasks(df, min_mean_tasks=0)
-    df_keep_with_min_tasks = filter_on_cutoff_time_and_tasks(df, min_mean_tasks=min_mean_tasks)
+def basic_information(df: pd.DataFrame, cutoff_mean_tasks: int = 30):
+    df_keep_all_tasks = filter_on_cutoff_time_and_tasks(df, cutoff_mean_tasks=0)
+    df_keep_with_min_tasks = filter_on_cutoff_time_and_tasks(df, cutoff_mean_tasks=cutoff_mean_tasks)
 
     number_of_routes_before_filter = df_keep_all_tasks["route_id"].nunique()
     number_of_routes_after_filter  = df_keep_with_min_tasks["route_id"].nunique()
@@ -393,7 +493,8 @@ def trips_per_day_plot(
         for wd in labels
     ]
 
-    ax2.boxplot(data, labels=labels, vert=True)
+    ax2.boxplot(data, labels=labels, vert=True, patch_artist=True,
+                boxprops=dict(facecolor=CUSTOM_COLORS["dark_orange"], alpha=0.5))
     ax2.set_title("Routes driven per weekday (boxplot)")
     ax2.set_ylabel("Routes per day")
     fig2.tight_layout()
@@ -474,29 +575,29 @@ def trips_per_route(trip_table: pd.DataFrame, show_plots: bool = True, return_df
 # The planner makes several requests per trip (route+day). The number of tasks in a trip can change during that planning phase.
 # How often does the number of tasks change during the planning of a trip? How big is the differcence?
 
-def task_variability_within_trips(df_keep: pd.DataFrame):
-    if df_keep.empty:
+def task_variability_within_trips(filtered_time_and_tasks_df: pd.DataFrame):
+    if filtered_time_and_tasks_df.empty:
         return pd.DataFrame()
 
     # Ensure correct types
-    df2 = df_keep.copy()
-    df2["num_tasks"] = pd.to_numeric(df2["num_tasks"], errors="coerce")
-    df2 = df2.sort_values(["route_id", "date", "request_time"], na_position="last")
+    df = filtered_time_and_tasks_df.copy()
+    df["num_tasks"] = pd.to_numeric(df["num_tasks"], errors="coerce")
+    df = df.sort_values(["route_id", "date", "request_time"], na_position="last")
 
     # Pre-calc: first vs last
     first_last = (
-        df2.groupby(["route_id", "date"])
+        df.groupby(["route_id", "date"])
         .apply(lambda g: pd.Series({
-            "first_tasks": g["num_tasks"].iloc[0],
-            "last_tasks":  g["num_tasks"].iloc[-1],
+            "n_tasks_first_req": g["num_tasks"].iloc[0],
+            "n_tasks_last_req":  g["num_tasks"].iloc[-1],
             "delta_last_first": g["num_tasks"].iloc[-1] - g["num_tasks"].iloc[0]
         }))
         .reset_index()
     )
 
     # Aggregate variability stats
-    trip_var = (
-        df2.groupby(["route_id", "date"])["num_tasks"]
+    trip_task_var_df= (
+        df.groupby(["route_id", "date"])["num_tasks"]
         .agg(
             min_tasks="min",
             max_tasks="max",
@@ -507,39 +608,39 @@ def task_variability_within_trips(df_keep: pd.DataFrame):
         .reset_index()
     )
 
-    trip_var["range_tasks"] = trip_var["max_tasks"] - trip_var["min_tasks"]
-    trip_var["changed_within_trip"] = trip_var["nunique_tasks"] > 1
+    trip_task_var_df["range_tasks"] = trip_task_var_df["max_tasks"] - trip_task_var_df["min_tasks"]
+    trip_task_var_df["changed_within_trip"] = trip_task_var_df["nunique_tasks"] > 1
 
     # Merge first/last
-    trip_var = trip_var.merge(first_last, on=["route_id", "date"], how="left")
+    trip_task_var_df = trip_task_var_df.merge(first_last, on=["route_id", "date"], how="left")
 
     # Summarize trip variability statistics
     summary_trip_var = {
-        "total_trips": trip_var.shape[0],
-        "trips_with_changes": int(trip_var["changed_within_trip"].sum()),
-        "first<last":  trip_var.loc[trip_var["delta_last_first"] > 0].count(),
-        "first>last": trip_var.loc[trip_var["delta_last_first"] < 0].count(),
-        "first=last": trip_var.loc[trip_var["delta_last_first"] == 0].count(),
-        "pct_changed": float(trip_var["changed_within_trip"].mean() * 100)
+        "total_trips": trip_task_var_df.shape[0],
+        "trips_with_changes": int(trip_task_var_df["changed_within_trip"].sum()),
+        "first<last": (trip_task_var_df["delta_last_first"] > 0).sum(),
+        "first>last":  (trip_task_var_df["delta_last_first"] < 0).sum(),
+        "first=last":  (trip_task_var_df["delta_last_first"] == 0).sum(),
+        "pct_changed": float(trip_task_var_df["changed_within_trip"].mean() * 100)
     }
     summary_trip_var_df = pd.DataFrame([summary_trip_var])
 
 
     top15_range_task_var_trip = (
-        trip_var.sort_values("range_tasks", ascending=False)
+        trip_task_var_df.sort_values("range_tasks", ascending=False)
                 .head(15)
-                [["route_id", "date", "first_tasks", "last_tasks", "range_tasks"]]
+                [["route_id", "date", "n_tasks_first_req", "n_tasks_last_req", "range_tasks"]]
     )
 
-    return trip_var, summary_trip_var_df, top15_range_task_var_trip
+    return trip_task_var_df, summary_trip_var_df, top15_range_task_var_trip
 
 def plot_task_variability_in_trips(
-    df_trips: pd.DataFrame,
+    trip_task_var_df: pd.DataFrame,
     *,
     route_col: str = "route_id",
     date_col: str = "date",
-    first_col: str = "first_tasks",
-    last_col: str = "last_tasks",
+    first_col: str = "n_tasks_first_req",
+    last_col: str = "n_tasks_last_req",
     default_mode: str = "lollipop",   # "lollipop" or "bars"
     direction_lollipop = "vertical"   # or horizontal
     ):
@@ -548,11 +649,11 @@ def plot_task_variability_in_trips(
 
     # --- Validate columns
     for c in (route_col, date_col, first_col, last_col):
-        if c not in df_trips.columns:
+        if c not in trip_task_var_df.columns:
             raise ValueError(f"Column '{c}' not found in dataframe.")
 
     # --- Clean copy and types
-    df = df_trips.copy()
+    df = trip_task_var_df.copy()
     df[route_col] = df[route_col].astype(str)
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     df = df.dropna(subset=[date_col])
@@ -681,6 +782,44 @@ def plot_task_variability_in_trips(
             plt.tight_layout()
             plt.show()
 
+def delta_n_tasks_first_last_req_per_day(trip_var_df: pd.DataFrame, save_plots: bool = True, show_plots: bool = True, output_dir: Optional[Path | str] = None, ):
+    df = trip_var_df.copy()
+    delta_df = df.groupby("date")["delta_last_first"].sum().reset_index()
+
+    delta_df["date"] = pd.to_datetime(delta_df["date"], errors="coerce")
+    delta_df = delta_df.sort_values("date")
+
+    if save_plots:
+        if output_dir is None:
+            try:
+                from learning_driver_preferences.paths import OUTPUT
+                outdir = Path(OUTPUT) / "task_variability"
+            except Exception:
+                outdir = Path("output") / "task_variability"
+        else:
+            outdir = Path(output_dir)
+        outdir.mkdir(parents=True, exist_ok=True)
+
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.bar(delta_df["date"].dt.strftime("%Y-%m-%d"), delta_df["delta_last_first"], color = CUSTOM_COLORS["dark_blue"])
+
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Delta n tasks last - first request")
+    ax.set_title("Daily sum of task change between last and first request per trip")
+
+    plt.xticks(rotation=60, ha="right")
+
+    fig.tight_layout()
+
+    if show_plots:
+        plt.show()
+    else:
+        plt.close()
+
+    return delta_df
+
 # ================================================================
 # SUMMARIZE REQUESTS
 # ================================================================
@@ -774,7 +913,8 @@ def summarize_requests(
         data = [df.loc[df["weekday"] == wd, "requests_count"].dropna().values for wd in labels]
 
         fig2, ax2  = plt.subplots()
-        ax2.boxplot(data, labels=labels, vert=True)
+        ax2.boxplot(data, labels=labels, vert=True, patch_artist=True,
+                boxprops=dict(facecolor=CUSTOM_COLORS["dark_orange"], alpha=0.5))
         ax2.set_title("Requests per weekday (boxplot)")
         ax2.set_ylabel("Requests per trip")
         fig2.tight_layout()
@@ -896,65 +1036,33 @@ def plot_requests_and_tasks_per_trip(
 # # SUMMARIZE TYPE OF REQUESTS (config_name)
 # # ============================================================
 def summarize_type_of_requests(
-    df_keep: pd.DataFrame,
-    trip_table: pd.DataFrame,
+    filtered_time_and_tasks_df: pd.DataFrame,
+    aggregated_trips_df: pd.DataFrame,
     save_plots: bool = True,
     show_plots: bool = True,
     show_plots_route_level: bool = False,
+    show_plots_weekday: bool = False,
     output_dir: Optional[Path | str] = None,
 ):
-
-   # 1) OVERALL config mix (fleet-level, request counts)
-    cfg_counts = df_keep["config_name"].value_counts(dropna=False)
-    cfg_pct = (cfg_counts / cfg_counts.sum() * 100.0).round(2)
-
-    # Dynamic threshold based on overall EstimateTime share
-    estimate_threshold_pct = float(cfg_pct.get("EstimateTime", 0.0))
-
-    # PER-ROUTE type op requests
-    per_route = (
-        trip_table.groupby("route_id")[["EstimateTime", "CreateSequence", "AddToSequence"]]
-                  .sum()
-                  .rename_axis("route_id")
-    )
-
-    per_route["total"] = per_route.sum(axis=1).replace(0, np.nan)
-    per_route_pct = per_route.div(per_route["total"], axis=0) * 100.0
-    per_route_pct = per_route_pct.rename(columns={
-        "EstimateTime": "estimate_pct",
-        "CreateSequence": "create_pct",
-        "AddToSequence": "add_pct"
-    })
-    per_route_pct = per_route_pct.reset_index()
-
-    # Routes above threshold
-    routes_over_threshold = (
-        per_route_pct.loc[per_route_pct["estimate_pct"] > estimate_threshold_pct]
-        .sort_values("estimate_pct", ascending=False)
-        .reset_index()
-    )
-
-    top15_routes_estimate = routes_over_threshold.head(15)[["route_id", "estimate_pct"]]
+    # df[route_col] = df[route_col].astype(str)
+    # df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    # df = df.dropna(subset=[date_col])
 
     # PLOT number of request type in bar chart per route_id and per trip (on trip-level) - show with interact
     route_col = "route_id"
     date_col = "date"
 
-    trips_per_route_df_copy = trip_table.copy()
+    df = aggregated_trips_df.copy()
 
-    trips_per_route = sorted(trips_per_route_df_copy["route_id"].unique().tolist())
+    trips = sorted(df["route_id"].astype(str).unique().tolist())
 
-    trips_per_route_df_copy[route_col] = trips_per_route_df_copy[route_col].astype(str)
-    trips_per_route_df_copy[date_col] = pd.to_datetime(trips_per_route_df_copy[date_col], errors="coerce")
-    trips_per_route_df_copy = trips_per_route_df_copy.dropna(subset=[date_col])
+    cols = ["create_count", "estimate_count", "add_count"]
 
-    cols = ["CreateSequence", "EstimateTime", "AddToSequence"]
-
-    @interact(route_id=Dropdown(options=trips_per_route, description="Route:"))
+    @interact(route_id=Dropdown(options=trips, description="Route:"))
     def _show(route_id):
         # Filter this route
         sub = (
-            trips_per_route_df_copy[trips_per_route_df_copy[route_col] == route_id]
+            df[df[route_col] == route_id]
             .groupby(date_col, as_index=False)[list(cols)]
             .sum()
             .sort_values(date_col)
@@ -976,7 +1084,7 @@ def summarize_type_of_requests(
         fig1, ax1 = plt.subplots(figsize=(max(10, len(sub) * 0.5), 5))
 
         ax1.bar(x, create, label="CreateSequence")
-        ax1.bar(x, estimate, bottom=create, label="EstimeateTime")
+        ax1.bar(x, estimate, bottom=create, label="EstimateTime")
         ax1.bar(x, add, bottom=create+estimate, label="AddToSequence")
 
         # Y-label and title
@@ -1001,27 +1109,42 @@ def summarize_type_of_requests(
         # Add legend
         ax1.legend(loc="upper left", frameon=False, ncol=3)
 
-        # # Light grid
-        # fig1.grid(axis="y", alpha=0.15)
-
         plt.tight_layout()
         plt.show()
 
+    # Aggregate per route (per route_id, across dates) on type of requests, start with dataframe
+    aggregate_route_df = (
+       aggregated_trips_df.groupby("route_id")[["estimate_count", "create_count", "add_count"]]
+                  .sum()
+                  .rename_axis("route_id")
+    )
+
+    aggregate_route_df["total"] = aggregate_route_df .sum(axis=1).replace(0, np.nan)
+    aggregate_route_pct_df = aggregate_route_df.div(aggregate_route_df["total"], axis=0) * 100.0
+    aggregate_route_pct_df = aggregate_route_pct_df.rename(columns={
+        "estimate_count": "estimate_pct",
+        "create_count": "create_pct",
+        "add_count": "add_pct"
+    })
+    aggregate_route_pct_df  = aggregate_route_pct_df.reset_index()
+
+    top15_routes_estimate = aggregate_route_pct_df.head(15)[["route_id", "estimate_pct"]]
+
     # PLOT number of request type in bar chart per route_id; on route-level (across days) - show with interact
-    per_route_df_copy = per_route.copy()
+    df2 = aggregate_route_df.copy()
 
     # Ensure route_id is index
-    if "route_id" in per_route_df_copy.columns:
-        per_route_df_copy = per_route_df_copy.set_index("route_id")
+    if "route_id" in df2.columns:
+       df2 = df2.set_index("route_id")
 
-    cols = ["CreateSequence", "EstimateTime", "AddToSequence"]
+    cols = ["create_count", "estimate_count", "add_count"]
 
     # Dropdown options
-    routes = per_route_df_copy.index.tolist()
+    routes = df2.index.tolist()
 
     @interact(route_id=Dropdown(options=routes, description="Route:"))
     def _show(route_id):
-        row = per_route_df_copy.loc[route_id, cols]
+        row = df2.loc[route_id, cols]
         create, estimate, add = row.tolist()
 
         fig2, ax2 = plt.subplots()
@@ -1054,6 +1177,19 @@ def summarize_type_of_requests(
         else:
             plt.close()
 
+    # Aggregate all requests to be able to make 1 overall plot of request types
+    aggregate_all_df = (
+        aggregate_route_df[["create_count", "estimate_count", "add_count"]]
+        .sum()
+        .to_frame(name="total_across_all_requests")
+    )
+
+    aggregate_all_plot = aggregate_all_df.rename(index={
+        "create_count":   "CreateSequence",
+        "estimate_count": "EstimateTime",
+        "add_count":      "AddSequence"
+    })
+
     # PLOT share of config_name across all requests
     if save_plots:
         if output_dir is None:
@@ -1068,18 +1204,27 @@ def summarize_type_of_requests(
 
         saved_path = outdir / "bar_plot_type_of_requests.png"
 
-        order = ["CreateSequence", "EstimateTime", "AddToSequence"]
-        vals = [cfg_pct.get(k, 0.0) for k in order]
         colors = [CUSTOM_COLORS["dark_blue"], CUSTOM_COLORS["dark_orange"], CUSTOM_COLORS["dark_green"]]
 
     fig3, ax3 = plt.subplots()
 
-    ax3.bar(order, vals,color=colors)
-    for i, v in enumerate(vals):
-        plt.text(i, v + 0.5, f"{v:.1f}%", ha="center")
+    bars = ax3.bar(
+        aggregate_all_plot.index,
+        aggregate_all_plot["total_across_all_requests"],
+        color=colors
+    )
 
-    ax3.set_title("Type of requests")
-    ax3.set_ylabel("% of requests")
+    ax3.bar_label(
+        bars,
+        labels=[f"{int(v):.0f}" for v in aggregate_all_plot["total_across_all_requests"]],
+        padding=3,                # distance in points above the bar
+        fontsize=10
+
+    )
+
+    ax3.set_xlabel("Request type")
+    ax3.set_ylabel("Number of requests")
+    ax3.set_title("Total requests across all trips")
 
     fig3.tight_layout()
     fig3.savefig(saved_path, dpi=200, bbox_inches="tight", facecolor="white")
@@ -1100,23 +1245,23 @@ def summarize_type_of_requests(
         outdir.mkdir(parents=True, exist_ok=True)
 
         # Ensure weekday exists
-        tt = trip_table.copy()
-        if "weekday" not in tt.columns:
-            if "date" in tt.columns:
-                tt["date"] = pd.to_datetime(tt["date"], errors="coerce")
-                tt["weekday"] = tt["date"].dt.day_name()
+        df3 = aggregated_trips_df.copy()
+        if "weekday" not in df3.columns:
+            if "date" in df3.columns:
+                df3["date"] = pd.to_datetime(df3["date"], errors="coerce")
+                df3["weekday"] = df3["date"].dt.day_name()
             else:
                 raise ValueError("trip_table must include 'weekday' or 'date' to derive 'weekday'.")
 
         # Safety: make sure EstimateTime is numeric (counts)
-        tt["EstimateTime"] = pd.to_numeric(tt["EstimateTime"], errors="coerce").fillna(0)
+        df3["estimate_count"] = pd.to_numeric(df3["estimate_count"], errors="coerce").fillna(0)
 
         order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        labels = [wd for wd in order if wd in tt["weekday"].unique()]
+        labels = [wd for wd in order if wd in df3["weekday"].unique()]
 
         # include zeros (distribution across all trips)
         saved_path_all = outdir / "boxplot_estimatetime_per_weekday_all_trips.png"
-        data_all = [tt.loc[tt["weekday"] == wd, "EstimateTime"].values for wd in labels]
+        data_all = [df3.loc[df3["weekday"] == wd, "estimate_count"].values for wd in labels]
 
     fig4, ax4 = plt.subplots()
     ax4.boxplot(data_all, labels=labels, vert=True, patch_artist=True,
@@ -1127,10 +1272,12 @@ def summarize_type_of_requests(
     fig4.tight_layout()
     fig4.savefig(saved_path_all, dpi=200, bbox_inches="tight", facecolor="white")
 
-    if show_plots:
+    if show_plots_weekday:
         plt.show()
+    else:
+        plt.close()
 
-    return per_route, per_route_pct, top15_routes_estimate
+    return aggregate_route_df, aggregate_route_pct_df, top15_routes_estimate
 
 # # # ============================================================
 # # # (4) RELATIONSHIPS (#tasks vs #requests; #tasks vs Estimate/Create shares)
