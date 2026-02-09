@@ -158,7 +158,8 @@ def parse_request_times(df: pd.DataFrame):
 # Vraag = welk tijdsegment nemen we in acht bij het analyseren van de requests? Methode: het aantal requests in de tijd uitzetten, nl. distributie van aantal requests per minuut over alle routes en dagen heen. Zo kan je zien op welke momenten requests gemaakt worden en kan je bepalen op welk tijdstip 85%, 90%, 95%... van de requests gemaakt zijn.
 
 def define_cutoff_time(
-    inputfile: Path | str,
+    # inputfile: Path | str,
+    df: pd.DataFrame,
     nonrelevant_hour_from: Optional[int] = 19,  # None => include whole day
     depot: Optional[str] = None, *,
     line_width: float = 1.2,
@@ -172,11 +173,11 @@ def define_cutoff_time(
     # Plot distribution of requests per minute-of-day and draw percentile cut lines.
     # Returns: fig, ax, info (dict with 'selected_depot', 'n_requests_kept')
 
-    df, info_in = read_inputfile(inputfile, depot=depot)
+    # df, info_in = read_inputfile(inputfile, depot=depot)
 
-    path = Path(inputfile)
+    # path = Path(inputfile)
     if "request_time" not in df.columns:
-        raise KeyError("Input must contain a parsable 'request_time' column.")
+         raise KeyError("Input must contain a parsable 'request_time' column.")
 
     times = parse_request_times(df)
 
@@ -241,7 +242,7 @@ def define_cutoff_time(
 
     ax.set_xlabel("Time of day")
     ax.set_ylabel("Number of requests")
-    ax.set_title(f"Requests per minute ({subtitle}) – {path.name} – depot: {info_in['selected_depot']}")
+    ax.set_title(f"Requests per minute from depot {depot}")
 
     if total_requests > 0 and p_minutes:
         base_colors = {85: "#d67d30", 90: "#f16101", 95: "#e64e3d", 98: "#ad4444"}
@@ -276,8 +277,8 @@ def define_cutoff_time(
         outdir.mkdir(parents=True, exist_ok=True)
 
         if filename is None:
-            depot_sfx = f"_{info_in['selected_depot']}" if info_in['selected_depot'] else ""
-            filename = f"cutoff_time_from_{path.stem}_{cutoff_label_short}{depot_sfx}.png"
+            depot_sfx = f"{depot} if {depot} else "
+            filename = f"cutoff_time_{cutoff_label_short}{depot_sfx}.png"
         saved_path = outdir / filename
         fig.savefig(saved_path, dpi=save_dpi, bbox_inches="tight", facecolor="white")
 
@@ -287,7 +288,7 @@ def define_cutoff_time(
         plt.close(fig)
 
     info = {
-        "selected_depot": info_in["selected_depot"],
+        "selected_depot": depot,
         "n_requests_kept": total_requests,
     }
 
@@ -300,7 +301,8 @@ def define_cutoff_time(
 # Vraag = hoeveel tasks moeten er minimaal in een route zitten opdat we de route_id in acht nemen het analyseren van de requests? Methode:
 
 def define_cutoff_stops(
-    inputfile: Path | str,
+    # inputfile: Path | str,
+    df: pd.DataFrame,
     depot: Optional[str] = None,
     *,
     column: str = "num_tasks",
@@ -316,7 +318,7 @@ def define_cutoff_stops(
     # Returns: dict(summary=DataFrame, cutoffs=list[float], info=dict)
 
     # READ INPUTFILE CSV OR EXCEL
-    df, info_in = read_inputfile(inputfile, depot=depot)
+    # df, info_in = read_inputfile(inputfile, depot=depot)
 
     # FILTER OUT TIMES AFTER 19h
     times = parse_request_times(df)
@@ -367,8 +369,7 @@ def define_cutoff_stops(
     # CREATE FILENAME
     base = filename_prefix
     if not base:
-        stem = Path(inputfile).stem
-        base = f"{column}_from_{stem}_{info_in['selected_depot']}"
+        base = f"{column}_from_depot: {depot}"
 
     # STAVE STATS IN FILE
     if save:
@@ -378,7 +379,7 @@ def define_cutoff_stops(
     # Basic histogram
     fig, ax = plt.subplots(figsize=(14, 5))
     sns.histplot(s, bins=bins, color=CUSTOM_COLORS["dark_blue"], ax=ax, stat="count")
-    ax.set_title(f"Distribution of {column} ({Path(inputfile).name}) - depot: {info_in['selected_depot']}")
+    ax.set_title(f"Distribution of {column} - depot: {depot}")
     ax.set_xlabel(column)
     ax.set_ylabel("Frequency")
 
@@ -405,7 +406,7 @@ def define_cutoff_stops(
         plt.close(fig)
 
     info = {
-        "selected_depot": info_in["selected_depot"],
+        "selected_depot": {depot},
         "n_rows": int(df.shape[0]),
     }
 
