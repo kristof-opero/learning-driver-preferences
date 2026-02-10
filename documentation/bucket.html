@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Bucket Bucketing Animation</title>
+  <style>
+    body { font-family: Arial; text-align: center; background: #111; color: white; }
+    canvas { background: #1a1a1a; border: 1px solid #444; margin-top: 10px; }
+    button { padding: 8px 14px; margin: 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<h2>Grid / Cell Bucketing Animation</h2>
+<p>Points in the same grid cell get the same color (same bucket).</p>
+
+<button onclick="reset()">Reset</button>
+<button onclick="step()">Step</button>
+<button onclick="autoPlay()">Auto Play</button>
+
+<canvas id="c" width="700" height="450"></canvas>
+
+<script>
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+const cellSize = 80;
+
+// More points
+const points = [
+  {x: 40, y: 25}, {x: 70, y: 75}, {x: 180, y: 110},
+  {x: 260, y: 70}, {x: 310, y: 100}, {x: 360, y: 140},
+  {x: 420, y: 90}, {x: 500, y: 60}, {x: 560, y: 120},
+
+  {x: 90, y: 200}, {x: 140, y: 250}, {x: 190, y: 290},
+  {x: 260, y: 230}, {x: 330, y: 260}, {x: 370, y: 310},
+  {x: 460, y: 220}, {x: 520, y: 250}, {x: 600, y: 290},
+
+  {x: 70, y: 360}, {x: 150, y: 390}, {x: 230, y: 410},
+  {x: 310, y: 360}, {x: 380, y: 400}, {x: 450, y: 370},
+  {x: 520, y: 340}, {x: 535, y: 360},
+  {x: 530, y: 390}, {x: 620, y: 410}
+  
+];
+
+let assigned = [];
+let current = 0;
+let timer = null;
+
+// Bucket -> color mapping
+const bucketColors = {};
+
+function bucketKey(p) {
+  const bx = Math.floor(p.x / cellSize);
+  const by = Math.floor(p.y / cellSize);
+  return `${bx},${by}`;
+}
+
+function randomColorFromKey(key) {
+  // deterministic-ish color based on key
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = key.charCodeAt(i) + ((hash << 5) - hash);
+
+  const r = (hash & 255);
+  const g = (hash >> 8) & 255;
+  const b = (hash >> 16) & 255;
+
+  return `rgb(${Math.abs(r)}, ${Math.abs(g)}, ${Math.abs(b)})`;
+}
+
+function getBucketColor(key) {
+  if (!bucketColors[key]) {
+    bucketColors[key] = randomColorFromKey(key);
+  }
+  return bucketColors[key];
+}
+
+function drawGrid() {
+  ctx.strokeStyle = "#333";
+  for (let x = 0; x <= canvas.width; x += cellSize) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y <= canvas.height; y += cellSize) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+}
+
+function highlightBucket(p) {
+  const bx = Math.floor(p.x / cellSize);
+  const by = Math.floor(p.y / cellSize);
+  const key = `${bx},${by}`;
+
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  ctx.fillRect(bx * cellSize, by * cellSize, cellSize, cellSize);
+
+  ctx.strokeStyle = "rgba(255,255,0,0.8)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(bx * cellSize, by * cellSize, cellSize, cellSize);
+
+  ctx.fillStyle = "white";
+  ctx.font = "14px Arial";
+  ctx.fillText(`Bucket ${key}`, bx * cellSize + 8, by * cellSize + 18);
+}
+
+function drawPoints() {
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const key = bucketKey(p);
+
+    // unassigned points are gray
+    let color = "gray";
+
+    // assigned points take bucket color
+    if (assigned.includes(i)) {
+      color = getBucketColor(key);
+    }
+
+    // current point is highlighted
+    if (i === current) {
+      color = "yellow";
+    }
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    // outline for readability
+    ctx.strokeStyle = "#000";
+    ctx.stroke();
+  }
+}
+
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawGrid();
+
+  if (current < points.length) {
+    highlightBucket(points[current]);
+  }
+
+  drawPoints();
+}
+
+function step() {
+  if (current >= points.length) return;
+
+  assigned.push(current);
+  current++;
+  render();
+}
+
+function reset() {
+  assigned = [];
+  current = 0;
+  clearInterval(timer);
+  timer = null;
+  render();
+}
+
+function autoPlay() {
+  if (timer) return;
+
+  timer = setInterval(() => {
+    if (current >= points.length) {
+      clearInterval(timer);
+      timer = null;
+      return;
+    }
+    step();
+  }, 350); // faster animation
+}
+
+render();
+</script>
+
+</body>
+</html>
