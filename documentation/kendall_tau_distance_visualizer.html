@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kendall Tau Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f6f6f6;
+      margin: 0;
+      padding: 30px;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+    }
+
+    p {
+      margin-top: 0;
+      color: #444;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 18px;
+      margin-top: 20px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 14px;
+      padding: 16px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+    }
+
+    .title {
+      font-weight: bold;
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+
+    .desc {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 12px;
+    }
+
+    .seqLabel {
+      font-size: 13px;
+      font-weight: bold;
+      margin-top: 10px;
+    }
+
+    .sequence {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 6px;
+    }
+
+    .item {
+      background: #e3e3ff;
+      padding: 7px 10px;
+      border-radius: 10px;
+      font-weight: bold;
+      font-size: 13px;
+    }
+
+    .inversion {
+      background: #ffd9d9;
+      border: 1px solid #cc0000;
+    }
+
+    .result {
+      margin-top: 12px;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    ul {
+      padding-left: 18px;
+      margin-top: 8px;
+      font-size: 13px;
+      color: #333;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #666;
+      margin-top: 6px;
+      line-height: 1.4;
+    }
+
+    .footer {
+      margin-top: 25px;
+      font-size: 13px;
+      color: #555;
+      background: white;
+      padding: 14px;
+      border-radius: 14px;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Kendall Tau Distance (Visual Demo)</h1>
+  <p>
+    Kendall Tau distance counts how many <b>pairwise inversions</b> exist between two orderings.
+    An inversion happens when two items swap their relative order.
+  </p>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="footer">
+    <b>How this matches your Python function:</b>
+    <ul>
+      <li>We only compare <b>common items</b> between the two sequences.</li>
+      <li>We count inversions: for each pair (a,b), if their order differs → +1.</li>
+      <li>Maximum inversions for n items = n(n-1)/2.</li>
+    </ul>
+  </div>
+
+  <script>
+    const cases = [
+      {
+        title: "Case 1: Identical order (distance = 0)",
+        description: "No inversions because the order is exactly the same.",
+        prev: ["A","B","C","D"],
+        curr: ["A","B","C","D"]
+      },
+      {
+        title: "Case 2: One small swap (distance = 1)",
+        description: "Only B and C swapped positions.",
+        prev: ["A","B","C","D"],
+        curr: ["A","C","B","D"]
+      },
+      {
+        title: "Case 3: Fully reversed (maximum distance)",
+        description: "Every pair is inverted. This gives the maximum Kendall Tau distance.",
+        prev: ["A","B","C","D"],
+        curr: ["D","C","B","A"]
+      },
+      {
+        title: "Case 4: Missing items (only common items count)",
+        description: "Kendall Tau compares only overlapping locations (like your request logic).",
+        prev: ["A","B","C","D","E"],
+        curr: ["B","E","D","F"]
+      },
+      {
+        title: "Case 5: Extra item added (distance still = 0)",
+        description: "A new item is added, but the relative order of the shared items stays the same.",
+        prev: ["A","B","C","D"],
+        curr: ["A","B","X","C","D"]
+      }
+    ];
+
+    function kendallTau(prevRaw, currRaw) {
+      // Common elements only (matches your Python logic)
+      const commonSet = new Set(prevRaw.filter(x => currRaw.includes(x)));
+
+      const prev = prevRaw.filter(x => commonSet.has(x));
+      const curr = currRaw.filter(x => commonSet.has(x));
+
+      const pos = {};
+      prev.forEach((item, idx) => pos[item] = idx);
+
+      let inversions = [];
+      let count = 0;
+
+      for (let i = 0; i < curr.length; i++) {
+        for (let j = i + 1; j < curr.length; j++) {
+          const a = curr[i];
+          const b = curr[j];
+
+          // If order differs compared to prev → inversion
+          if (pos[a] > pos[b]) {
+            count++;
+            inversions.push([a, b]);
+          }
+        }
+      }
+
+      const n = curr.length;
+      const maxInv = n * (n - 1) / 2;
+      const pct = maxInv > 0 ? (count / maxInv * 100).toFixed(1) : "0.0";
+
+      return { prev, curr, inversions, count, n, maxInv, pct };
+    }
+
+    function renderCase(caseData) {
+      const { title, description, prev: prevRaw, curr: currRaw } = caseData;
+      const res = kendallTau(prevRaw, currRaw);
+
+      const inversionItems = new Set(res.inversions.flat());
+
+      const card = document.createElement("div");
+      card.className = "card";
+
+      card.innerHTML = `
+        <div class="title">${title}</div>
+        <div class="desc">${description}</div>
+
+        <div class="seqLabel">Previous (common items only):</div>
+        <div class="sequence">
+          ${res.prev.map(x => `<div class="item">${x}</div>`).join("")}
+        </div>
+
+        <div class="seqLabel">Current (common items only):</div>
+        <div class="sequence">
+          ${res.curr.map(x => {
+            const cls = inversionItems.has(x) ? "item inversion" : "item";
+            return `<div class="${cls}">${x}</div>`;
+          }).join("")}
+        </div>
+
+        <div class="result">
+          Kendall Tau distance = ${res.count} inversions<br/>
+          <span class="small">
+            n = ${res.n}, max inversions = ${res.maxInv}, percentage = ${res.pct}%
+          </span>
+        </div>
+
+        <div class="seqLabel">Inversions found:</div>
+        <ul>
+          ${
+            res.inversions.length === 0
+              ? "<li>No inversions</li>"
+              : res.inversions.map(pair => `<li>(${pair[0]}, ${pair[1]}) swapped</li>`).join("")
+          }
+        </ul>
+
+        <div class="small">
+          Raw sequences:<br/>
+          prev = [${prevRaw.join(", ")}]<br/>
+          curr = [${currRaw.join(", ")}]
+        </div>
+      `;
+
+      return card;
+    }
+
+    const grid = document.getElementById("grid");
+    cases.forEach(c => grid.appendChild(renderCase(c)));
+  </script>
+
+</body>
+</html>
