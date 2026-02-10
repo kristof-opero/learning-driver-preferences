@@ -120,6 +120,7 @@
       <li>We only compare <b>common items</b> between the two sequences.</li>
       <li>We count inversions: for each pair (a,b), if their order differs → +1.</li>
       <li>Maximum inversions for n items = n(n-1)/2.</li>
+      <li>If new items appear (or disappear), they are ignored unless they exist in both sequences.</li>
     </ul>
   </div>
 
@@ -145,13 +146,13 @@
       },
       {
         title: "Case 4: Missing items (only common items count)",
-        description: "Kendall Tau compares only overlapping locations (like your request logic).",
+        description: "Some items disappear or appear, so we only compare the overlap.",
         prev: ["A","B","C","D","E"],
         curr: ["B","E","D","F"]
       },
       {
         title: "Case 5: Extra item added (distance still = 0)",
-        description: "A new item is added, but the relative order of the shared items stays the same.",
+        description: "A new item (X) is inserted, but the shared items stay in the same relative order.",
         prev: ["A","B","C","D"],
         curr: ["A","B","X","C","D"]
       }
