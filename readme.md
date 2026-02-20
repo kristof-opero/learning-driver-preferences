@@ -1,30 +1,19 @@
-# Repo
-Kristof created a repo learning-driver-preferences
-Folders data, documentation, models, notebooks, scripts
-Data will not be included in git-travel (in .gitignore)
-Kristof invited teammates Karen and Maxime
+# Introduction
 
-# Setup
-Install Conda or Anaconda
-Clone the repository that Kristof has made: https://github.com/kristof-opero/learning-driver-preferences.git
-Create a conda environment driver-preferences with the environment.yml file and activate
+This folder contains the work of Karen, Maxime, Marc and Kristof for the project "learning driver preferences" (Syntra Data Scientist II / Evening Program). An explanation of the project can be found in the folder 'documentation', subdirectory 'assignment'. 
 
-conda env create -f environment.yml
-conda activate driver-preferences
+Organization of the project folder:
 
-# Updates
-If other packages are needed, please update environment.yml & add, commit and push to the main branch.
-To (de)install packages from the updated file: conda env update -f environment.yml --prune
+- The directory 'documentation' contains, next to information on the assignment, a second subdirectory with some animations and images that provide further explanation of concepts used in the main analysis.
+- The directory 'notebooks' contains the notebook that centralizes the work performed ('analysis.ipynb'). It provides a breakdown of the work performed, calls all functions (stored in a different directory = Python module) and returns the results (tables, plots...). **The complete storyline can be found in this notebook.** 
+- The directory 'scripts' contains a Python file with all functions ('functions.py'), a config.py file that manages file paths, and a matplotlib style document.
+  
+The data directory is omitted from this folder given its size, but was provided with the assignment (and has not changed).
 
-# Update with notebook collaboration helpers
-Added nbstripout, nbdime, pre-commit in environment.yml
-- nbstripout → strips notebook outputs on commit
-- nbdime → improves notebook diffs and merges
-- pre-commit → enforces hooks automatically
+# Technical Set-Up
 
-If installed yet, update your conda environment.
+The list of libraries installed and needed to run the Jupyter notebook 'analysis.ipynb' and all its dependencies is provided in the file 'requirements.txt'. The notebook can be successfully run using Python version 3.13.7; other recent Python versions may equally work.
 
-Run following commands in command line:
-nbstripout --install
-nbdime config-git --enable
-pre-commit install
+# Conclusion
+
+Refer to the 'analysis.ipynb' notebook in the directory 'notebooks' for our complete analysis and conclusion.
